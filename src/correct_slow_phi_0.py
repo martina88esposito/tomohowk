@@ -3,10 +3,9 @@
 
 import argparse
 import h5py
-from numpy import float32
+import math
 import scipy
-from scipy import arange, pi, polyfit, polyval, tile
-import sys
+from scipy import arange, pi, polyfit, polyval
 from tools import parse_range, create_dataset
 
 
@@ -23,31 +22,34 @@ def parse_args():
 def load_phi_0(args):
     with h5py.File(args.filename) as h5:
         phi_0_ds = h5["raw_phase_offsets"]
+        p_value_ds = h5["p_values"]
         if args.scans == "all":
             scans = range(phi_0_ds.shape[0])
         else:
             scans = args.scans
         phi_0 = phi_0_ds[scans]
-    return phi_0
+        p_values = p_value_ds[scans]
+    return phi_0, p_values
 
 
 def unfold(phi_0):
     pr = phi_0.ravel()/pi
-    for k in range(4):
-        for i in range(len(pr)-1):
-            if pr[i+1]-pr[i]>.5:
-                pr[i+1] -= 1.
-            elif pr[i+1]-pr[i]<-.5:
-                pr[i+1] += 1.
+    for i in range(1, len(pr)):
+        d = math.fmod(pr[i] - pr[i-1], 2.)
+        if d > 0:
+            c = d if abs(d) < abs(d-2.) else d-2.
+        else:
+            c = d if abs(d) < abs(d+2.) else d+2.
+        pr[i] = pr[i-1] + c
     return pr*pi
 
 
-def calculate_slow_phi_0s(phi_0s):
+def calculate_slow_phi_0s(phi_0s, p_values):
     slow_phi_0s = scipy.empty_like(phi_0s)
     for i, phi_0 in enumerate(phi_0s):
         phi_0_unfolded = unfold(phi_0)
         x = arange(len(phi_0_unfolded))
-        model = polyfit(x, phi_0_unfolded, 3)
+        model = polyfit(x, phi_0_unfolded, 3, w=p_values[i])
         slow_phi_0s[i] = polyval(model, x)
     return slow_phi_0s
 
@@ -70,8 +72,8 @@ def correct_angles(args, phi_0s, slow_phi_0s):
 
 def main():
     args = parse_args()
-    phi_0s = load_phi_0(args)
-    slow_phi_0s = calculate_slow_phi_0s(phi_0s)
+    phi_0s, p_values = load_phi_0(args)
+    slow_phi_0s = calculate_slow_phi_0s(phi_0s, p_values)
     correct_angles(args, phi_0s, slow_phi_0s)
 
 
